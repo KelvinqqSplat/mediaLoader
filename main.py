@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import yt_dlp
 
-BOT_TOKEN = "your_bot_token"  # ← ЕДИНСТВЕННЫЙ необходимый параметр
+BOT_TOKEN = "8531031662:AAEltzbRxlwvvNGXYUFVlITeTtyAcVsvfog"  # ← ЕДИНСТВЕННЫЙ необходимый параметр
 
 ADV_TEXT = (
     "🚀 Пока видео загружается, посетите https://hosting.zp.ua — испытайте наш хостинг с 30-дневным бесплатным пробным периодом, карта не нужна.\n"
