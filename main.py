@@ -1,8 +1,10 @@
 import os
+import sys
 import logging
 import threading
 import asyncio
 import sqlite3
+import subprocess
 from datetime import datetime, timedelta
 from fastapi import FastAPI
 import uvicorn
@@ -10,14 +12,16 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import yt_dlp
 
-# === Токен и настройки ===
+# === Настройка логирования ===
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not set")
+    logger.error("BOT_TOKEN not set in environment variables")
+    sys.exit(1)
 
-logging.basicConfig(level=logging.INFO)
-
-# === База данных (SQLite) для подписок ===
+# === База данных (SQLite) ===
 conn = sqlite3.connect("subscribers.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("""
@@ -29,28 +33,21 @@ cursor.execute("""
 """)
 conn.commit()
 
-def get_user(user_id):
-    cursor.execute("SELECT is_subscribed, subscribed_until FROM users WHERE user_id=?", (user_id,))
+def is_subscribed(user_id):
+    cursor.execute("SELECT subscribed_until FROM users WHERE user_id=?", (user_id,))
     row = cursor.fetchone()
-    if row:
-        return {"subscribed": bool(row[0]), "until": row[1]}
-    return None
+    if not row or not row[0]:
+        return False
+    if datetime.fromisoformat(row[0]) < datetime.now():
+        cursor.execute("UPDATE users SET is_subscribed=0 WHERE user_id=?", (user_id,))
+        conn.commit()
+        return False
+    return True
 
 def set_subscription(user_id, days):
     until = (datetime.now() + timedelta(days=days)).isoformat()
     cursor.execute("INSERT OR REPLACE INTO users (user_id, is_subscribed, subscribed_until) VALUES (?, 1, ?)", (user_id, until))
     conn.commit()
-
-def is_subscribed(user_id):
-    data = get_user(user_id)
-    if not data or not data["subscribed"]:
-        return False
-    if data["until"] and datetime.fromisoformat(data["until"]) < datetime.now():
-        # истекло
-        cursor.execute("UPDATE users SET is_subscribed=0 WHERE user_id=?", (user_id,))
-        conn.commit()
-        return False
-    return True
 
 # === Команды ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,7 +57,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append([InlineKeyboardButton("✅ Подписка активна", callback_data="sub_info")])
     else:
         keyboard.append([InlineKeyboardButton("💎 Оформить подписку (30 дней, 100 ₽)", callback_data="buy_sub")])
-    keyboard.append([InlineKeyboardButton("📥 Отправить ссылку", callback_data="send_link")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         "👋 Привет! Я скачиваю видео и аудио из соцсетей.\n\n"
@@ -73,7 +69,6 @@ async def buy_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    # Здесь можно вставить реальную оплату (через Telegram Stars или внешний платёж)
     set_subscription(user_id, 30)
     await query.edit_message_text("🎉 Подписка оформлена на 30 дней! Реклама отключена.")
 
@@ -83,34 +78,68 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not url.startswith(("http://", "https://")):
         await update.message.reply_text("❌ Это не похоже на ссылку. Отправь корректный URL.")
         return
-    
+
     status_msg = await update.message.reply_text("⏳ Начинаю загрузку...")
-    
-    # Параметры скачивания
+
+    # Создаём папку для загрузок
+    os.makedirs("downloads", exist_ok=True)
+
     ydl_opts = {
         "format": "best[height<=720]",
         "outtmpl": "downloads/%(title)s.%(ext)s",
         "quiet": True,
         "no_warnings": True,
-        "impersonate": "chrome-131",
+        "ignoreerrors": True,
+        "extract_flat": False,
+        "impersonate": "chrome",  # обход блокировок
+        "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
+        },
+        "extractor_args": {
+            "tiktok": {
+                "api_hostname": ["www.tiktok.com"],
+                "embed_url": ["https://www.tiktok.com/embed"],
+            }
+        }
     }
-    
+
+    # Если есть cookies.txt – используем
+    if os.path.exists("cookies.txt"):
+        ydl_opts["cookiefile"] = "cookies.txt"
+        logger.info("Using cookies from cookies.txt")
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_path = ydl.prepare_filename(info)
-            # Отправляем видео или аудио
-            if info.get("ext") in ["mp4", "webm", "mov"]:
-                await update.message.reply_video(video=open(file_path, "rb"))
-            else:
-                await update.message.reply_document(document=open(file_path, "rb"))
-            # Показываем рекламу, если нет подписки
+            if not os.path.exists(file_path):
+                # Поиск по маске
+                import glob
+                files = glob.glob("downloads/*")
+                if files:
+                    file_path = files[0]
+                else:
+                    await update.message.reply_text("❌ Файл не найден после скачивания.")
+                    return
+            # Определяем тип файла и отправляем
+            ext = os.path.splitext(file_path)[1].lower()
+            with open(file_path, "rb") as f:
+                if ext in ['.mp4', '.webm', '.mov']:
+                    await update.message.reply_video(video=f)
+                elif ext in ['.mp3', '.m4a', '.aac']:
+                    await update.message.reply_audio(audio=f)
+                else:
+                    await update.message.reply_document(document=f)
+            # Реклама для бесплатных
             if not is_subscribed(user_id):
                 await update.message.reply_text(
                     "💬 Хотите убрать рекламу и скачивать без ограничений? Оформите подписку через /start."
                 )
             os.remove(file_path)
     except Exception as e:
+        logger.error(f"Error downloading: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
     finally:
         await status_msg.delete()
@@ -139,7 +168,6 @@ async def run_bot():
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    if not os.path.exists("downloads"):
-        os.makedirs("downloads")
+    logger.info("Starting bot...")
     threading.Thread(target=run_webserver, daemon=True).start()
     asyncio.run(run_bot())
