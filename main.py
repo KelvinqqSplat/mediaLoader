@@ -92,6 +92,7 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "outtmpl": "downloads/%(title)s.%(ext)s",
         "quiet": True,
         "no_warnings": True,
+        "impersonate": "chrome-131",
     }
     
     try:
