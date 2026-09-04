@@ -1,0 +1,6 @@
+yt-dlp
+brotli
+websockets
+fastapi
+uvicorn
+python-telegram-bot
