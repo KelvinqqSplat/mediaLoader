@@ -85,25 +85,25 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     os.makedirs("downloads", exist_ok=True)
 
     ydl_opts = {
-        "format": "best[height<=720]",
-        "outtmpl": "downloads/%(title)s.%(ext)s",
-        "quiet": True,
-        "no_warnings": True,
-        "ignoreerrors": True,
-        "extract_flat": False,
-        "impersonate": "chrome",  # обход блокировок
-        "headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
-        },
-        "extractor_args": {
-            "tiktok": {
-                "api_hostname": ["www.tiktok.com"],
-                "embed_url": ["https://www.tiktok.com/embed"],
-            }
+    "format": "best[height<=720]",
+    "outtmpl": "downloads/%(title)s.%(ext)s",
+    "quiet": True,
+    "no_warnings": True,
+    "ignoreerrors": True,
+    "extract_flat": False,
+    # "impersonate": "chrome",  # <- УДАЛИЛИ ЭТУ СТРОКУ
+    "headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
+    },
+    "extractor_args": {
+        "tiktok": {
+            "api_hostname": ["www.tiktok.com"],
+            "embed_url": ["https://www.tiktok.com/embed"],
         }
     }
+}
 
     # Если есть cookies.txt – используем
     if os.path.exists("cookies.txt"):
