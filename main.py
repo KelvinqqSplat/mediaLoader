@@ -90,20 +90,86 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "no_warnings": True,
         "ignoreerrors": True,
         "extract_flat": False,
+        "extractor_args": {
+            "youtube": {"skip": ["dash", "hls"]},
+        },
         "headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
-        },
-        "extractor_args": {
-            "tiktok": {
-                "api_hostname": ["www.tiktok.com"],
-                "embed_url": ["https://www.tiktok.com/embed"],
-            }
         }
     }
 
     if os.path.exists("cookies.txt"):
+        ydl_opts["cookiefile"] = "cookies.txt"
+        logger.info("Using cookies from cookies.txt")
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Сначала получаем информацию (без скачивания)
+            info = ydl.extract_info(url, download=False)
+            if info is None:
+                await update.message.reply_text("❌ Не удалось получить информацию по ссылке. Попробуйте позже.")
+                return
+            # Теперь скачиваем
+            ydl.download([url])
+            file_path = ydl.prepare_filename(info)
+            if not os.path.exists(file_path):
+                import glob
+                files = glob.glob("downloads/*")
+                if files:
+                    file_path = files[0]
+                else:
+                    await update.message.reply_text("❌ Файл не найден после скачивания.")
+                    return
+            # Отправляем файл
+            ext = os.path.splitext(file_path)[1].lower()
+            with open(file_path, "rb") as f:
+                if ext in ['.mp4', '.webm', '.mov']:
+                    await update.message.reply_video(video=f)
+                elif ext in ['.mp3', '.m4a', '.aac']:
+                    await update.message.reply_audio(audio=f)
+                else:
+                    await update.message.reply_document(document=f)
+            # Реклама бесплатным
+            if not is_subscribed(user_id):
+                await update.message.reply_text(
+                    "💬 Хотите убрать рекламу и скачивать без ограничений? Оформите подписку через /start."
+                )
+            os.remove(file_path)
+    except Exception as e:
+        logger.error(f"Download error: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
+    finally:
+        await status_msg.delete()
+
+# === Создаём приложение ===
+app = Application.builder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(buy_sub, pattern="buy_sub"))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+
+# === FastAPI для keep-alive ===
+web_app = FastAPI()
+@web_app.get("/")
+def health():
+    return {"status": "ok"}
+
+def run_webserver():
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(web_app, host="0.0.0.0", port=port)
+
+async def run_bot():
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    logger.info("Starting bot...")
+    threading.Thread(target=run_webserver, daemon=True).start()
+    asyncio.run(run_bot())    if os.path.exists("cookies.txt"):
         ydl_opts["cookiefile"] = "cookies.txt"
         logger.info("Using cookies from cookies.txt")
 
