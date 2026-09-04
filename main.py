@@ -228,8 +228,8 @@ def health():
 def run_webserver():
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(web_app, host="0.0.0.0", port=port)
-
-async def run_bot():
+    
+    async def run_bot():
     await app.initialize()
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
