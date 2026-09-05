@@ -46,45 +46,69 @@ async def buy_sub(update, context):
     set_subscription(query.from_user.id, 30)
     await query.edit_message_text("Подписка оформлена!")
 
-async def handle_url(update, context):
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     url = update.message.text.strip()
     if not url.startswith(("http://", "https://")):
-        await update.message.reply_text("Это не ссылка")
+        await update.message.reply_text("❌ Это не ссылка")
         return
-    status = await update.message.reply_text("Загрузка...")
+
+    status_msg = await update.message.reply_text("⏳ Загрузка...")
     os.makedirs("downloads", exist_ok=True)
+
     ydl_opts = {
         "format": "best[height<=720]",
         "outtmpl": "downloads/%(title)s.%(ext)s",
         "quiet": True,
         "no_warnings": True,
         "ignoreerrors": True,
-        "headers": {"User-Agent": "Mozilla/5.0"}
+        "extract_flat": False,
+        "headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3",
+        },
+        "extractor_args": {
+            "youtube": {
+                "skip": ["dash", "hls"],
+                "player_client": ["android", "web"],
+            }
+        }
     }
+
     if os.path.exists("cookies.txt"):
         ydl_opts["cookiefile"] = "cookies.txt"
+        logger.info("Using cookies")
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             if info is None:
-                await update.message.reply_text("Ошибка получения инфо")
+                await update.message.reply_text("❌ Не удалось получить информацию. Проверьте ссылку.")
+                return
+            # Проверка на возрастное ограничение
+            if info.get("age_limit") and info["age_limit"] > 0:
+                await update.message.reply_text("❌ Видео имеет возрастное ограничение. Скачать нельзя.")
                 return
             ydl.download([url])
-            path = ydl.prepare_filename(info)
-            if not os.path.exists(path):
+            file_path = ydl.prepare_filename(info)
+            if not os.path.exists(file_path):
                 import glob
                 files = glob.glob("downloads/*")
-                path = files[0] if files else None
-            if path:
-                with open(path, "rb") as f:
-                    await update.message.reply_video(video=f)
-                os.remove(path)
-            else:
-                await update.message.reply_text("Файл не найден")
+                file_path = files[0] if files else None
+            if not file_path:
+                await update.message.reply_text("❌ Файл не найден")
+                return
+            with open(file_path, "rb") as f:
+                await update.message.reply_video(video=f)
+            if not is_subscribed(user_id):
+                await update.message.reply_text("💬 Реклама. Оформи подписку через /start.")
+            os.remove(file_path)
     except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
+        logger.error(f"Download error: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
     finally:
-        await status.delete()
+        await status_msg.delete()
 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
