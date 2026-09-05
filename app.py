@@ -179,8 +179,7 @@ async def bot_loop():
     await app.updater.start_polling(drop_pending_updates=True)
     while True:
         await asyncio.sleep(3600)
-
 if __name__ == "__main__":
-    logger.info("Starting...")
+    logger.info("Starting bot...")
     threading.Thread(target=run_web, daemon=True).start()
     asyncio.run(bot_loop())
