@@ -69,7 +69,6 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("⏳ Загрузка...")
     os.makedirs("downloads", exist_ok=True)
 
-    # Расширенные настройки
     ydl_opts = {
         "format": "best[height<=720]",
         "outtmpl": "downloads/%(title)s.%(ext)s",
@@ -92,18 +91,65 @@ async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
     }
 
-    # Если есть cookies.txt – используем
     if os.path.exists("cookies.txt"):
         ydl_opts["cookiefile"] = "cookies.txt"
         logger.info("Using cookies")
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Пытаемся получить информацию
             info = ydl.extract_info(url, download=False)
             if info is None:
                 await update.message.reply_text("❌ Не удалось получить информацию. Проверьте ссылку.")
                 return
+            if info.get("age_limit") and info["age_limit"] > 0:
+                await update.message.reply_text("❌ Видео имеет возрастное ограничение.")
+                return
+            ydl.download([url])
+            file_path = ydl.prepare_filename(info)
+            if not os.path.exists(file_path):
+                import glob
+                files = glob.glob("downloads/*")
+                file_path = files[0] if files else None
+            if not file_path:
+                await update.message.reply_text("❌ Файл не найден")
+                return
+            with open(file_path, "rb") as f:
+                await update.message.reply_video(video=f)
+            if not is_subscribed(user_id):
+                await update.message.reply_text("💬 Реклама. Оформи подписку через /start.")
+            os.remove(file_path)
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Download error: {error_msg}", exc_info=True)
+        await update.message.reply_text(f"❌ Ошибка: {error_msg[:200]}")
+    finally:
+        await status_msg.delete()
+
+app = Application.builder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(buy_sub, pattern="buy_sub"))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_url))
+
+web_app = FastAPI()
+@web_app.get("/")
+def health():
+    return {"ok": True}
+
+def run_web():
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(web_app, host="0.0.0.0", port=port)
+
+async def bot_loop():
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    logger.info("Starting bot...")
+    threading.Thread(target=run_web, daemon=True).start()
+    asyncio.run(bot_loop())                return
             # Если есть возрастное ограничение
             if info.get("age_limit") and info["age_limit"] > 0:
                 await update.message.reply_text("❌ Видео имеет возрастное ограничение.")
