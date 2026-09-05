@@ -1,4 +1,4 @@
-yt-dlp
+yt-dlp>=2025.1.1
 brotli
 websockets
 fastapi
